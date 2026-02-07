@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elite Dual - Matrix Sign Language AI</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --matrix-green: #00ff41;
+            --matrix-dark: #000800;
+            --matrix-soft: #003b00;
+            --alert-red: #ff0000;
+        }
+
+        body, html {
+            height: 100%; margin: 0;
+            background-color: var(--matrix-dark);
+            color: var(--matrix-green);
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+        }
+
+        #interfaz {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            height: 100vh;
+            border: 2px solid var(--matrix-green);
+        }
+
+        #panel-control {
+            border-right: 2px solid var(--matrix-green);
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: rgba(0, 20, 0, 0.9);
+            overflow-y: auto;
+        }
+
+        .status-box {
+            border: 1px solid var(--matrix-green);
+            padding: 10px;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+        }
+
+        .id-display {
+            color: #fff;
+            background: var(--matrix-soft);
+            padding: 5px;
+            word-break: break-all;
+            border: 1px dashed var(--matrix-green);
+            font-size: 0.7rem;
+        }
+
+        .btn {
+            background: transparent;
+            color: var(--matrix-green);
+            border: 1px solid var(--matrix-green);
+            padding: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            transition: 0.3s;
+        }
+
+        .btn:hover {
+            background: var(--matrix-green);
+            color: black;
+            box-shadow: 0 0 15px var(--matrix-green);
+        }
+
+        input {
+            background: black;
+            border: 1px solid var(--matrix-green);
+            color: var(--matrix-green);
+            padding: 8px;
+            outline: none;
+        }
+
+        #escena-principal {
+            position: relative;
+            background: black;
+        }
+
+        #video-remoto {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: sepia(20%) hue-rotate(80deg) brightness(90%);
+        }
+
+        /* CONFIGURACIÓN DE CÁMARA IGUAL AL PRIMER CÓDIGO */
+        .mi-camara-mini {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 240px;
+            height: 180px;
+            border: 2px solid var(--matrix-green);
+            background: black;
+            z-index: 10;
+        }
+
+        .console-text {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 85%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .bubble {
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid var(--matrix-green);
+            padding: 15px;
+            font-size: 1.8rem;
+            text-shadow: 0 0 5px var(--matrix-green);
+            min-height: 2.5rem;
+        }
+
+        #output-otro { color: #ffbf00; border-color: #ffbf00; }
+
+        .matrix-keyboard {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 3px;
+        }
+
+        .key {
+            border: 1px solid var(--matrix-soft);
+            font-size: 12px;
+            padding: 8px 0;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .key:hover { background: var(--matrix-soft); }
+    </style>
+</head>
+<body>
+
+<div id="interfaz">
+    <div id="panel-control">
+        <div class="status-box">SYSTEM_STATUS: <span id="status">INIT...</span></div>
+        <div class="status-box">
+            LOCAL_ID:<br>
+            <div id="mi-id" class="id-display">GENERANDO...</div>
+        </div>
+        <input type="text" id="id-remoto" placeholder="ID DEL DESTINATARIO">
+        <button class="btn" onclick="realizarLlamada()">[ INTERLASAR LLAMADA ]</button>
+        <button class="btn" onclick="iniciarSistemas()">[ 1. ACTIVAR CÁMARA + IA ]</button>
+        <button class="btn" onclick="activarEscucha()">[ 2. TRADUCIR SU VOZ ]</button>
+        <div class="matrix-keyboard" id="keyboard"></div>
+        <button class="btn" style="color:var(--alert-red); border-color:var(--alert-red);" onclick="borrarTexto()">[ BORRAR FRASE ]</button>
+    </div>
+
+    <div id="escena-principal">
+        <video id="video-remoto" autoplay playsinline></video>
+        <div id="mi-webcam-container" class="mi-camara-mini"></div>
+        <div class="console-text">
+            <div id="output-otro" class="bubble">SISTEMA: ESPERANDO SEÑAL</div>
+            <div id="output-mio" class="bubble">FRASE: ---</div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<script>
+    const URL_MODELO = "https://teachablemachine.withgoogle.com/models/da5e0T2lt/";
+    let model, webcam, peer, dataConnection;
+    let fraseActual = "";
+    let ultimaLetraConfirmada = "";
+    let contadorFrames = 0;
+    const FRAMES_PARA_CONFIRMAR = 15;
+
+    peer = new Peer();
+    peer.on('open', id => {
+        document.getElementById('mi-id').innerText = id;
+        document.getElementById('status').innerText = "ONLINE";
+    });
+
+    peer.on('call', call => {
+        navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(stream => {
+            call.answer(stream);
+            call.on('stream', st => document.getElementById('video-remoto').srcObject = st);
+        });
+    });
+
+    peer.on('connection', conn => {
+        dataConnection = conn;
+        conn.on('data', data => {
+            document.getElementById('output-otro').innerText = "RECIBIDO: " + data;
+            hablar(data);
+        });
+    });
+
+    async function iniciarSistemas() {
+        document.getElementById('status').innerText = "CARGANDO IA...";
+        model = await tmImage.load(URL_MODELO + "model.json", URL_MODELO + "metadata.json");
+        
+        // CONFIGURACIÓN DE WEBCAM SIN INVERSIÓN (Igual al primer código)
+        webcam = new tmImage.Webcam(240, 180, true);
+        await webcam.setup(); 
+        await webcam.play();
+        
+        document.getElementById("mi-webcam-container").appendChild(webcam.canvas);
+        document.getElementById('status').innerText = "IA ACTIVA";
+        window.requestAnimationFrame(loopIA);
+    }
+
+    function realizarLlamada() {
+        const idAmigo = document.getElementById('id-remoto').value;
+        if(!idAmigo) return alert("INGRESE ID DESTINO");
+        navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(stream => {
+            const call = peer.call(idAmigo, stream);
+            call.on('stream', st => document.getElementById('video-remoto').srcObject = st);
+        });
+        dataConnection = peer.connect(idAmigo);
+    }
+
+    async function loopIA() {
+        webcam.update();
+        await predict();
+        window.requestAnimationFrame(loopIA);
+    }
+
+    async function predict() {
+        const prediction = await model.predict(webcam.canvas);
+        let maxProb = 0;
+        let claseDetectada = "";
+        for (let i = 0; i < model.getTotalClasses(); i++) {
+            if(prediction[i].probability > maxProb) {
+                maxProb = prediction[i].probability;
+                claseDetectada = prediction[i].className;
+            }
+        }
+        if (maxProb > 0.90 && claseDetectada !== "FONDO") {
+            if (claseDetectada === ultimaLetraConfirmada) {
+                contadorFrames++;
+                if (contadorFrames === FRAMES_PARA_CONFIRMAR) {
+                    gestionarTexto(claseDetectada);
+                    contadorFrames = 0;
+                }
+            } else {
+                ultimaLetraConfirmada = claseDetectada;
+                contadorFrames = 0;
+            }
+        }
+    }
+
+    function gestionarTexto(letra) {
+        if(letra.toUpperCase() === "ESPACIO") {
+            fraseActual += " ";
+        } else {
+            fraseActual += letra;
+        }
+        document.getElementById('output-mio').innerText = "FRASE: " + fraseActual;
+        hablar(letra);
+        if(dataConnection) dataConnection.send(fraseActual);
+    }
+
+    function activarEscucha() {
+        const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const rec = new Speech();
+        rec.lang = 'es-ES';
+        rec.continuous = true;
+        rec.onresult = e => {
+            let texto = e.results[e.results.length - 1][0].transcript;
+            document.getElementById('output-otro').innerText = "VOZ_DETECTADA: " + texto;
+        };
+        rec.start();
+    }
+
+    const keys = "ABCDEFGHIJKLMNÑOPQRSTUVWXYZ ".split("");
+    const kb = document.getElementById('keyboard');
+    keys.forEach(k => {
+        const d = document.createElement('div');
+        d.className = 'key';
+        d.innerText = k === " " ? "_" : k;
+        d.onclick = () => gestionarTexto(k);
+        kb.appendChild(d);
+    });
+
+    function borrarTexto() { 
+        fraseActual = ""; 
+        document.getElementById('output-mio').innerText = "FRASE: ---"; 
+    }
+
+    function hablar(t) {
+        const m = new SpeechSynthesisUtterance(t);
+        m.lang = 'es-ES';
+        m.rate = 1.2;
+        window.speechSynthesis.speak(m);
+    }
+</script>
+</body>
+</html>
